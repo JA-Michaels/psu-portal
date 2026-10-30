@@ -10,3 +10,6 @@ website = "https://github.com/GNAT-Academic-Program/portal"
 tags = ["windowing", "input", "framebuffer", "sdl", "glfw", "spark", "gap"]
 
 project-files = ["portal.gpr"]
+
+[[depends-on]]
+gnatprove = "^16.1.0"
