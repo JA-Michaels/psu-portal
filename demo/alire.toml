@@ -1,0 +1,9 @@
+name = "demo"
+description = "Demonstration of Ada PAL"
+version = "0.1.0-dev"
+
+authors = ["Jeremiah Michaels"]
+maintainers = ["Jeremiah Michaels <jeremiah.michaels04@proton.me>"]
+licenses = "Apache-2.0"
+website = ""
+tags = []
