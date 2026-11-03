@@ -6,3 +6,4 @@ config/
 *.o
 *.ali
 gnatprove/
+.vscode/
