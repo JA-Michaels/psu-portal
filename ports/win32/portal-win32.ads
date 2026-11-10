@@ -83,6 +83,23 @@ private package Portal.Win32 is
       Colors : DWORD := 0;  --  RGBQUAD[1], unused for 32bpp
    end record with Convention => C;
 
+   type XINPUT_GAMEPAD is record
+      wButtons      : WORD;
+      bLeftTrigger  : unsigned_char;
+      bRightTrigger : unsigned_char;
+      sThumbLX      : short;
+      sThumbLY      : short;
+      sThumbRX      : short;
+      sThumbRY      : short;
+   end record
+      with Convention => C;
+
+   type XINPUT_STATE is record
+      dwPacketNumber : DWORD;
+      Gamepad        : XINPUT_GAMEPAD;
+   end record
+      with Convention => C;
+
    ---------------------------------------------------------------------
    --  Constants
    ---------------------------------------------------------------------
@@ -138,6 +155,21 @@ private package Portal.Win32 is
    IDC_SIZENS   : constant := 32645;
    IDC_NO       : constant := 32648;
    IDC_HAND     : constant := 32649;
+
+   XINPUT_GAMEPAD_DPAD_UP        : constant WORD := 16#0001#;
+   XINPUT_GAMEPAD_DPAD_DOWN      : constant WORD := 16#0002#;
+   XINPUT_GAMEPAD_DPAD_LEFT      : constant WORD := 16#0004#;
+   XINPUT_GAMEPAD_DPAD_RIGHT     : constant WORD := 16#0008#;
+   XINPUT_GAMEPAD_START          : constant WORD := 16#0010#;
+   XINPUT_GAMEPAD_BACK           : constant WORD := 16#0020#;
+   XINPUT_GAMEPAD_LEFT_THUMB     : constant WORD := 16#0040#;
+   XINPUT_GAMEPAD_RIGHT_THUMB    : constant WORD := 16#0080#;
+   XINPUT_GAMEPAD_LEFT_SHOULDER  : constant WORD := 16#0100#;
+   XINPUT_GAMEPAD_RIGHT_SHOULDER : constant WORD := 16#0200#;
+   XINPUT_GAMEPAD_A              : constant WORD := 16#1000#;
+   XINPUT_GAMEPAD_B              : constant WORD := 16#2000#;
+   XINPUT_GAMEPAD_X              : constant WORD := 16#4000#;
+   XINPUT_GAMEPAD_Y              : constant WORD := 16#8000#;
 
    ---------------------------------------------------------------------
    --  Functions
@@ -199,5 +231,7 @@ private package Portal.Win32 is
      with Import, Convention => Stdcall, External_Name => "GetTickCount64";
    procedure Win_Sleep (Ms : DWORD)
      with Import, Convention => Stdcall, External_Name => "Sleep";
+   function XInputGetState (dwUserIndex : DWORD; pState : in out XINPUT_STATE) return DWORD
+      with Import, Convention => Stdcall, External_Name => "XInputGetState";
 
 end Portal.Win32;

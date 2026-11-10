@@ -471,48 +471,7 @@ package body Portal.Backend with SPARK_Mode => Off is
 
    function Mouse_Buttons return Button_State is (Buttons);
 
-   ---------------------------------------------------------------------
-   --  Gamepad input
-   ---------------------------------------------------------------------
-
-   type XINPUT_GAMEPAD is record
-      wButtons      : WORD;
-      bLeftTrigger  : Byte;
-      bRightTrigger : Byte;
-      sThumbLX      : short;
-      sThumbLY      : short;
-      sThumbRX      : short;
-      sThumbRY      : short;
-   end record
-      with Convention => C;
-
-   type XINPUT_STATE is record
-      dwPacketNumber : DWORD;
-      Gamepad        : XINPUT_GAMEPAD;
-   end record
-      with Convention => C;
-
-   XINPUT_GAMEPAD_DPAD_UP        : constant WORD := 16#0001#;
-   XINPUT_GAMEPAD_DPAD_DOWN      : constant WORD := 16#0002#;
-   XINPUT_GAMEPAD_DPAD_LEFT      : constant WORD := 16#0004#;
-   XINPUT_GAMEPAD_DPAD_RIGHT     : constant WORD := 16#0008#;
-   XINPUT_GAMEPAD_START          : constant WORD := 16#0010#;
-   XINPUT_GAMEPAD_BACK           : constant WORD := 16#0020#;
-   XINPUT_GAMEPAD_LEFT_THUMB     : constant WORD := 16#0040#;
-   XINPUT_GAMEPAD_RIGHT_THUMB    : constant WORD := 16#0080#;
-   XINPUT_GAMEPAD_LEFT_SHOULDER  : constant WORD := 16#0100#;
-   XINPUT_GAMEPAD_RIGHT_SHOULDER : constant WORD := 16#0200#;
-   XINPUT_GAMEPAD_A              : constant WORD := 16#1000#;
-   XINPUT_GAMEPAD_B              : constant WORD := 16#2000#;
-   XINPUT_GAMEPAD_X              : constant WORD := 16#4000#;
-   XINPUT_GAMEPAD_Y              : constant WORD := 16#8000#;
-
    function Gamepad (Id : Valid_Gamepad_Id) return Gamepad_State is
-      function XInputGetState (dwUserIndex : DWORD; pState : in out XINPUT_STATE) return DWORD
-         with
-            Import => True,
-            Convention => Stdcall,
-            External_Name => "XInputGetState";
       State : XINPUT_STATE;
    begin
       if XInputGetState (DWORD (Id) - 1, State) = 0 then
