@@ -12,6 +12,7 @@ with Interfaces;          use Interfaces;
 with Interfaces.C;        use Interfaces.C;
 with System;              use type System.Address;
 with Portal.Win32;        use Portal.Win32;
+with Bedrock.Input;
 
 package body Portal.Backend with SPARK_Mode => Off is
 
@@ -470,9 +471,82 @@ package body Portal.Backend with SPARK_Mode => Off is
 
    function Mouse_Buttons return Button_State is (Buttons);
 
+   ---------------------------------------------------------------------
+   --  Gamepad input
+   ---------------------------------------------------------------------
+
+   type XINPUT_GAMEPAD is record
+      wButtons      : WORD;
+      bLeftTrigger  : Byte;
+      bRightTrigger : Byte;
+      sThumbLX      : short;
+      sThumbLY      : short;
+      sThumbRX      : short;
+      sThumbRY      : short;
+   end record
+      with Convention => C;
+
+   type XINPUT_STATE is record
+      dwPacketNumber : DWORD;
+      Gamepad        : XINPUT_GAMEPAD;
+   end record
+      with Convention => C;
+
+   XINPUT_GAMEPAD_DPAD_UP        : constant WORD := 16#0001#;
+   XINPUT_GAMEPAD_DPAD_DOWN      : constant WORD := 16#0002#;
+   XINPUT_GAMEPAD_DPAD_LEFT      : constant WORD := 16#0004#;
+   XINPUT_GAMEPAD_DPAD_RIGHT     : constant WORD := 16#0008#;
+   XINPUT_GAMEPAD_START          : constant WORD := 16#0010#;
+   XINPUT_GAMEPAD_BACK           : constant WORD := 16#0020#;
+   XINPUT_GAMEPAD_LEFT_THUMB     : constant WORD := 16#0040#;
+   XINPUT_GAMEPAD_RIGHT_THUMB    : constant WORD := 16#0080#;
+   XINPUT_GAMEPAD_LEFT_SHOULDER  : constant WORD := 16#0100#;
+   XINPUT_GAMEPAD_RIGHT_SHOULDER : constant WORD := 16#0200#;
+   XINPUT_GAMEPAD_A              : constant WORD := 16#1000#;
+   XINPUT_GAMEPAD_B              : constant WORD := 16#2000#;
+   XINPUT_GAMEPAD_X              : constant WORD := 16#4000#;
+   XINPUT_GAMEPAD_Y              : constant WORD := 16#8000#;
+
    function Gamepad (Id : Valid_Gamepad_Id) return Gamepad_State is
-     ((Connected => False, others => <>));
-   --  Milestone: XInputGetState.
+      function XInputGetState (dwUserIndex : DWORD; pState : in out XINPUT_STATE) return DWORD
+         with
+            Import => True,
+            Convention => Stdcall,
+            External_Name => "XInputGetState";
+      State : XINPUT_STATE;
+   begin
+      if XInputGetState (DWORD (Id) - 1, State) = 0 then
+         return (
+            Connected => True,
+            Buttons   => [
+               South          => (State.Gamepad.wButtons and XINPUT_GAMEPAD_A) /= 0,
+               East           => (State.Gamepad.wButtons and XINPUT_GAMEPAD_B) /= 0,
+               West           => (State.Gamepad.wButtons and XINPUT_GAMEPAD_X) /= 0,
+               North          => (State.Gamepad.wButtons and XINPUT_GAMEPAD_Y) /= 0,
+               Left_Shoulder  => (State.Gamepad.wButtons and XINPUT_GAMEPAD_LEFT_SHOULDER) /= 0,
+               Right_Shoulder => (State.Gamepad.wButtons and XINPUT_GAMEPAD_RIGHT_SHOULDER) /= 0,
+               Back_Button    => (State.Gamepad.wButtons and XINPUT_GAMEPAD_BACK) /= 0,
+               Left_Stick     => (State.Gamepad.wButtons and XINPUT_GAMEPAD_LEFT_THUMB) /= 0,
+               Right_Stick    => (State.Gamepad.wButtons and XINPUT_GAMEPAD_RIGHT_THUMB) /= 0,
+               DPad_Up        => (State.Gamepad.wButtons and XINPUT_GAMEPAD_DPAD_UP) /= 0,
+               DPad_Down      => (State.Gamepad.wButtons and XINPUT_GAMEPAD_DPAD_DOWN) /= 0,
+               DPad_Left      => (State.Gamepad.wButtons and XINPUT_GAMEPAD_DPAD_LEFT) /= 0,
+               DPad_Right     => (State.Gamepad.wButtons and XINPUT_GAMEPAD_DPAD_RIGHT) /= 0,
+               Bedrock.Input.Start => (State.Gamepad.wButtons and XINPUT_GAMEPAD_START) /= 0,
+               Guide          => False       -- No XINPUT_GAMEPAD value for Guide
+            ],
+            Axes      => [
+               Left_X        => Axis_Value (State.Gamepad.sThumbLX),
+               Left_Y        => Axis_Value (State.Gamepad.sThumbLY),
+               Right_X       => Axis_Value (State.Gamepad.sThumbRX),
+               Right_Y       => Axis_Value (State.Gamepad.sThumbRY),
+               Left_Trigger  => Axis_Value (State.Gamepad.bLeftTrigger),
+               Right_Trigger => Axis_Value (State.Gamepad.bRightTrigger)
+            ]);
+      else
+         return (Connected => False, others => <>);
+      end if;
+   end Gamepad;
 
    procedure Set_Text_Input (Window : Window_Id; Enabled : Boolean) is
    begin
