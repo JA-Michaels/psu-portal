@@ -17,6 +17,7 @@ private package Portal.Win32 is
    subtype HBRUSH    is HANDLE;
    subtype LPCSTR    is System.Address;
    type UINT   is new unsigned;
+   type WORD   is new unsigned_short;
    type DWORD  is new unsigned_long;  --  32-bit on Windows
    type BOOL   is new int;
    type WPARAM is mod 2 ** Standard'Address_Size;

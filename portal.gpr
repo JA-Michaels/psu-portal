@@ -29,7 +29,7 @@ library project Portal is
    package Linker is
       case Port is
          when "x11"   => for Linker_Options use ("-lX11");
-         when "win32" => for Linker_Options use ("-luser32", "-lgdi32");
+         when "win32" => for Linker_Options use ("-luser32", "-lgdi32", "-lxinput1_4");
          when others  => null;
       end case;
    end Linker;
