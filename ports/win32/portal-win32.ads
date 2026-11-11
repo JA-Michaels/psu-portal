@@ -15,7 +15,9 @@ private package Portal.Win32 is
    subtype HCURSOR   is HANDLE;
    subtype HICON     is HANDLE;
    subtype HBRUSH    is HANDLE;
+   subtype HRAWINPUT is HANDLE;
    subtype LPCSTR    is System.Address;
+   subtype LPVOID    is System.Address;
    type UINT   is new unsigned;
    type WORD   is new unsigned_short;
    type DWORD  is new unsigned_long;  --  32-bit on Windows
@@ -91,14 +93,40 @@ private package Portal.Win32 is
       sThumbLY      : short;
       sThumbRX      : short;
       sThumbRY      : short;
-   end record
-      with Convention => C;
+   end record with Convention => C;
 
    type XINPUT_STATE is record
       dwPacketNumber : DWORD;
       Gamepad        : XINPUT_GAMEPAD;
-   end record
-      with Convention => C;
+   end record with Convention => C;
+
+   type RAWINPUTHEADER is record
+      dwType  : DWORD;
+      dwSize  : DWORD;
+      hDevice : HANDLE;
+      wParams : WPARAM;
+   end record with Convention => C;
+
+   type RAWMOUSE is record
+      usFlags            : WORD;
+      ulButtons          : DWORD;
+      ulRawButtons       : DWORD;
+      lLastX             : long;
+      lLastY             : long;
+      ulExtraInformation : DWORD;
+   end record with Convention => C;
+
+   type RAWINPUT is record
+      Header : RAWINPUTHEADER;
+      Mouse  : RAWMOUSE;
+   end record with Convention => C;
+
+   type RAWINPUTDEVICE is record
+      usUsagePage : WORD;
+      usUsage     : WORD;
+      dwFlags     : DWORD;
+      hwndTarget  : HWND;
+   end record with Convention => C;
 
    ---------------------------------------------------------------------
    --  Constants
@@ -128,6 +156,7 @@ private package Portal.Win32 is
    WM_KILLFOCUS    : constant := 16#0008#;
    WM_PAINT        : constant := 16#000F#;
    WM_CLOSE        : constant := 16#0010#;
+   WM_INPUT        : constant := 16#00FF#;
    WM_KEYDOWN      : constant := 16#0100#;
    WM_KEYUP        : constant := 16#0101#;
    WM_CHAR         : constant := 16#0102#;
@@ -170,6 +199,12 @@ private package Portal.Win32 is
    XINPUT_GAMEPAD_B              : constant WORD := 16#2000#;
    XINPUT_GAMEPAD_X              : constant WORD := 16#4000#;
    XINPUT_GAMEPAD_Y              : constant WORD := 16#8000#;
+
+   HID_USAGE_PAGE_GENERIC  : constant WORD  := 16#01#;
+   HID_USAGE_GENERIC_MOUSE : constant WORD  := 16#02#;
+   RID_INPUT               : constant UINT  := 16#10000003#;
+   RIM_TYPEMOUSE           : constant DWORD := 0;
+   MOUSE_MOVE_ABSOLUTE     : constant WORD  := 16#0001#;
 
    ---------------------------------------------------------------------
    --  Functions
@@ -232,6 +267,14 @@ private package Portal.Win32 is
    procedure Win_Sleep (Ms : DWORD)
      with Import, Convention => Stdcall, External_Name => "Sleep";
    function XInputGetState (dwUserIndex : DWORD; pState : in out XINPUT_STATE) return DWORD
-      with Import, Convention => Stdcall, External_Name => "XInputGetState";
+     with Import, Convention => Stdcall, External_Name => "XInputGetState";
+   function GetRawInputData
+     (h_RawInput : HRAWINPUT; uiCommand : UINT; pData : LPVOID;
+      pcbSize : access UINT; cbSizeHeader : UINT) return UINT
+     with Import, Convention => Stdcall, External_Name => "GetRawInputData";
+   function RegisterRawInputDevices
+     (pRawInputDevices : access constant RAWINPUTDEVICE; uiNumDevices : UINT;
+      cbSize : UINT) return BOOL
+     with Import, Convention => Stdcall, External_Name => "RegisterRawInputDevices";
 
 end Portal.Win32;

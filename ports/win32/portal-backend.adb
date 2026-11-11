@@ -13,6 +13,7 @@ with Interfaces.C;        use Interfaces.C;
 with System;              use type System.Address;
 with Portal.Win32;        use Portal.Win32;
 with Bedrock.Input;
+with System.Storage_Elements;
 
 package body Portal.Backend with SPARK_Mode => Off is
 
@@ -166,7 +167,22 @@ package body Portal.Backend with SPARK_Mode => Off is
             Enqueue ((Kind => Window_Expose, Time => T, Window => Id));
             return DefWindowProcA (H, Msg, W, L);
          when WM_SETFOCUS =>
+         declare
+            Device : aliased RAWINPUTDEVICE :=
+               (usUsagePage => HID_USAGE_PAGE_GENERIC,
+               usUsage     => HID_USAGE_GENERIC_MOUSE,
+               dwFlags     => 0,
+               hwndTarget  => H);
+         begin
+            if RegisterRawInputDevices
+               (pRawInputDevices => Device'Access,
+               uiNumDevices => 1,
+               cbSize => RAWINPUTDEVICE'Size / 8) = 0
+            then
+               null;
+            end if;
             Enqueue ((Kind => Window_Focus_In, Time => T, Window => Id)); return 0;
+         end;
          when WM_KILLFOCUS =>
             Enqueue ((Kind => Window_Focus_Out, Time => T, Window => Id)); return 0;
 
@@ -193,6 +209,24 @@ package body Portal.Backend with SPARK_Mode => Off is
                          Text => [Character'Val (W), ' ', ' ', ' '], Length => 1));
             end if;
             return 0;
+
+         when WM_INPUT =>
+            declare
+               Raw_Input : aliased RAWINPUT;
+               Size : aliased UINT := RAWINPUT'Size / 8;
+            begin
+               if GetRawInputData (HRAWINPUT (System'To_Address (
+                  System.Storage_Elements.Integer_Address (L))), RID_INPUT, Raw_Input'Address,
+                  Size'Access, UINT (RAWINPUTHEADER'Size / 8)) /= UINT'Last
+                  and then Raw_Input.Header.dwType = RIM_TYPEMOUSE
+                  and then (Raw_Input.Mouse.usFlags and MOUSE_MOVE_ABSOLUTE) = 0
+               then
+                  Enqueue ((Kind => Mouse_Move, Time => T, Window => Id,
+                     At_Pos => Mouse_Position (Id), Delta_X => Pixels (Raw_Input.Mouse.lLastX),
+                     Delta_Y => Pixels (Raw_Input.Mouse.lLastY), Held => Buttons));
+               end if;
+            end;
+            return DefWindowProcA (H, Msg, W, L);
 
          when WM_MOUSEMOVE =>
             Enqueue ((Kind => Mouse_Move, Time => T, Window => Id,
@@ -327,6 +361,23 @@ package body Portal.Backend with SPARK_Mode => Off is
             end if;
             Slots (W) := (Open => True, Handle => H, Size => Size);
             Window := W;
+            declare
+               Device : aliased RAWINPUTDEVICE :=
+                  (usUsagePage => HID_USAGE_PAGE_GENERIC,
+                  usUsage     => HID_USAGE_GENERIC_MOUSE,
+                  dwFlags     => 0,
+                  hwndTarget  => H);
+            begin
+               if RegisterRawInputDevices
+                  (pRawInputDevices => Device'Access,
+                  uiNumDevices => 1,
+                  cbSize => RAWINPUTDEVICE'Size / 8) = 0
+               then
+                  Destroy_Window (W);
+                  Window := No_Window;
+                  return;
+               end if;
+            end;
             return;
          end if;
       end loop;
