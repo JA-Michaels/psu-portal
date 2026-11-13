@@ -12,11 +12,21 @@ jobs:
       - uses: alire-project/setup-alire@v4
       - name: Build library (null port)
         run: alr -n build
+      - name: Diagnose
+        run: |
+          cd tests
+          alr --version
+          alr index --update-all
+          alr search --list aunit
+          alr show aunit
+          alr toolchain
+          gnat --version
       - name: Tests
         run: |
           cd tests
+          alr -n index --update-all
           alr -n build
-          alr run
+          alr -n run
       - name: Showcase (runs headless, exits on synthetic Quit)
         run: |
           cd showcase
