@@ -15,7 +15,12 @@ jobs:
       - name: Tests
         run: |
           cd tests
-          alr -n index --update-all
+          alr -n index --list
+          alr -n search aunit
+          alr -n show aunit
+          alr -n toolchain
+          gnat --version
+          alr -n with --solve
           alr -n build
           alr -n run
       - name: Showcase (runs headless, exits on synthetic Quit)
