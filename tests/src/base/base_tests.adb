@@ -2,7 +2,7 @@ with AUnit.Assertions;
 
 with Bedrock.Screen; use Bedrock.Screen;
 with Bedrock.Colors; use Bedrock.Colors;
-with Portal;             use Portal;
+with Portal;
 with Portal.Backend;     use Portal.Backend;
 with Portal.Framebuffer; use Portal.Framebuffer;
 with Portal.Input;       use Portal.Input;
