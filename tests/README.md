@@ -15,4 +15,4 @@ There are three main components to the tests: Runner, Suite, and Tests.
 
 To add a test to an existing suite, add the Ada source files with the name `*_tests` to the corresponding suite directory. The test must subtype `AUnit.Test_Cases.Test_Case` and override `Register_Tests` and `Name`. `Register_Tests` registers the test functions and procedures, `Name` returns the name of the test.  
 
-To add a test suite, create the corresponding Ada `*_suite` source files to a dedicated directory in `src`. This package should provide a `Suite` function that returns access to a `AUnit.Test_Suites.Test_Suite`, which will refer to tests as described above. This suite will need to be added to `test_runner.adb`.  
+To add a test suite, create the corresponding Ada `*_suite` source files in a dedicated directory in `src`. This package should provide a `Suite` function that returns access to a `AUnit.Test_Suites.Test_Suite`, which will refer to tests as described above. This suite will need to be added to `parent_suite.adb`.  
