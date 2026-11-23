@@ -40,6 +40,10 @@ package body Portal.Backend with SPARK_Mode => Off is
    Clipboard      : String (1 .. Max_Clipboard);
    Clipboard_Last : Natural := 0;
 
+   Gamepad_Cache      : array (Valid_Gamepad_Id) of Gamepad_State :=
+      [others => (Connected => False, others => <>)];
+   Gamepad_Check_Time : array (Valid_Gamepad_Id) of Ticks := [others => 0];
+
    function To_Address (N : Integer) return System.Address is
      (System'To_Address (N));
    --  MAKEINTRESOURCE: a small integer smuggled through a pointer.
@@ -55,6 +59,7 @@ package body Portal.Backend with SPARK_Mode => Off is
    function Current_Mods return Modifiers;
    function Wnd_Proc (H : HWND; Msg : UINT; W : WPARAM; L : LPARAM) return LRESULT
      with Convention => Stdcall;
+   procedure Update_Gamepads;
    procedure Pump;
 
    procedure Enqueue (E : Event) is
@@ -244,6 +249,52 @@ package body Portal.Backend with SPARK_Mode => Off is
       end case;
    end Wnd_Proc;
 
+   procedure Update_Gamepads is
+      W  : constant Window_Id := Id_Of (GetForegroundWindow);
+      T  : constant Ticks := Now;
+   begin
+      if W = No_Window then
+         return;
+      end if;
+      for Id in Valid_Gamepad_Id loop
+         if Gamepad_Cache (Id).Connected
+            or else T >= Gamepad_Check_Time (Id)
+         then
+            declare
+               State : constant Gamepad_State := Gamepad (Id);
+            begin
+               if State.Connected /= Gamepad_Cache (Id).Connected then
+                  if State.Connected then
+                     Enqueue ((Kind => Gamepad_Connected, Time => T, Window => W, Gamepad => Id));
+                  else
+                     Enqueue ((Kind => Gamepad_Disconnected, Time => T,
+                        Window => W, Gamepad => Id));
+                  end if;
+               end if;
+               for B in Gamepad_Button loop
+                  if State.Buttons (B) /= Gamepad_Cache (Id).Buttons (B) then
+                     if State.Buttons (B) then
+                        Enqueue ((Kind => Gamepad_Button_Down, Time => T, Window => W,
+                           Pad => Id, Pad_Button => B));
+                     else
+                        Enqueue ((Kind => Gamepad_Button_Up, Time => T, Window => W,
+                           Pad => Id, Pad_Button => B));
+                     end if;
+                  end if;
+               end loop;
+               for A in Gamepad_Axis loop
+                  if State.Axes (A) /= Gamepad_Cache (Id).Axes (A) then
+                     Enqueue ((Kind => Gamepad_Axis_Motion, Time => T, Window => W,
+                        Axis_Pad => Id, Axis => A, Value => State.Axes (A)));
+                  end if;
+               end loop;
+               Gamepad_Cache (Id) := State;
+               Gamepad_Check_Time (Id) := T + 1000;
+            end;
+         end if;
+      end loop;
+   end Update_Gamepads;
+
    procedure Pump is
       M : aliased MSG;
    begin
@@ -255,6 +306,7 @@ package body Portal.Backend with SPARK_Mode => Off is
             null;
          end if;
       end loop;
+      Update_Gamepads;
    end Pump;
 
    ---------------------------------------------------------------------
@@ -499,8 +551,8 @@ package body Portal.Backend with SPARK_Mode => Off is
                Left_Y        => Axis_Value (State.Gamepad.sThumbLY),
                Right_X       => Axis_Value (State.Gamepad.sThumbRX),
                Right_Y       => Axis_Value (State.Gamepad.sThumbRY),
-               Left_Trigger  => Axis_Value (State.Gamepad.bLeftTrigger),
-               Right_Trigger => Axis_Value (State.Gamepad.bRightTrigger)
+               Left_Trigger  => Axis_Value (State.Gamepad.bLeftTrigger) * 32767 / 255,
+               Right_Trigger => Axis_Value (State.Gamepad.bRightTrigger) * 32767 / 255
             ]);
       else
          return (Connected => False, others => <>);

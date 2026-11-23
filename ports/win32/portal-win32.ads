@@ -233,5 +233,7 @@ private package Portal.Win32 is
      with Import, Convention => Stdcall, External_Name => "Sleep";
    function XInputGetState (dwUserIndex : DWORD; pState : in out XINPUT_STATE) return DWORD
       with Import, Convention => Stdcall, External_Name => "XInputGetState";
+   function GetForegroundWindow return HWND
+      with Import, Convention => Stdcall, External_Name => "GetForegroundWindow";
 
 end Portal.Win32;
