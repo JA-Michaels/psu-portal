@@ -107,7 +107,6 @@ procedure Demo is
             * Integer (Paddle_Speed) / 32767);
       end if;
 
-
       --  Player 2: I and K; Right analog stick Y axis on controller
       if Is_Key_Down (Key_I) then
          Right_Y := Right_Y - Paddle_Speed;
