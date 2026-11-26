@@ -15,6 +15,7 @@ private package Portal.Win32 is
    subtype HCURSOR   is HANDLE;
    subtype HICON     is HANDLE;
    subtype HBRUSH    is HANDLE;
+   subtype DPI_AWARENESS_CONTEXT is HANDLE;
    subtype LPCSTR    is System.Address;
    type UINT   is new unsigned;
    type WORD   is new unsigned_short;
@@ -144,6 +145,7 @@ private package Portal.Win32 is
    WM_XBUTTONDOWN  : constant := 16#020B#;
    WM_XBUTTONUP    : constant := 16#020C#;
    WM_MOUSELEAVE   : constant := 16#02A3#;
+   WM_DPICHANGED   : constant := 16#02E0#;
 
    IDC_ARROW : constant := 32512;
    IDC_IBEAM : constant := 32513;
@@ -235,5 +237,7 @@ private package Portal.Win32 is
       with Import, Convention => Stdcall, External_Name => "XInputGetState";
    function GetForegroundWindow return HWND
       with Import, Convention => Stdcall, External_Name => "GetForegroundWindow";
+   function SetProcessDpiAwarenessContext (value : DPI_AWARENESS_CONTEXT) return BOOL
+      with Import, Convention => Stdcall, External_Name => "SetProcessDpiAwarenessContext";
 
 end Portal.Win32;

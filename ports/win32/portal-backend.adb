@@ -241,6 +241,9 @@ package body Portal.Backend with SPARK_Mode => Off is
             end;
             return 0;
 
+         when WM_DPICHANGED =>
+            return 0;
+
          when WM_DESTROY =>
             return 0;
 
@@ -315,7 +318,14 @@ package body Portal.Backend with SPARK_Mode => Off is
 
    procedure Initialize (Success : out Boolean) is
       WC : aliased WNDCLASSEXA;
+      DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 : constant DPI_AWARENESS_CONTEXT :=
+         DPI_AWARENESS_CONTEXT (To_Address (-4));
    begin
+      if SetProcessDpiAwarenessContext
+         (DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) = 0
+      then
+         null;
+      end if;
       Instance := GetModuleHandleA (System.Null_Address);
       Start := GetTickCount64;
       WC := (Size => WNDCLASSEXA'Size / 8,
