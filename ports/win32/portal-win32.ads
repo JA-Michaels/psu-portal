@@ -173,6 +173,9 @@ private package Portal.Win32 is
    XINPUT_GAMEPAD_X              : constant WORD := 16#4000#;
    XINPUT_GAMEPAD_Y              : constant WORD := 16#8000#;
 
+   DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 : constant DPI_AWARENESS_CONTEXT :=
+      System'To_Address (-4);
+
    ---------------------------------------------------------------------
    --  Functions
    ---------------------------------------------------------------------
