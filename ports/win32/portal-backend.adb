@@ -590,9 +590,39 @@ package body Portal.Backend with SPARK_Mode => Off is
 
    procedure Get_Clipboard (Text : out String; Last : out Natural) is
       N : constant Natural := Natural'Min (Text'Length, Clipboard_Last);
+      hData : HANDLE;
+      pData : LPVOID;
    begin
+      if OpenClipboard (System.Null_Address) = 0 then
+         Last := Text'First -1;
+         return;
+      end if;
+      hData := GetClipboardData (CF_UNICODETEXT);
+      if hData = System.Null_Address then
+         if CloseClipboard = 0 then
+            null;
+         end if;
+         Last := Text'First - 1;
+         return;
+      end if;
+      pData := GlobalLock (hData);
+      if pData = System.Null_Address then
+         if CloseClipboard = 0 then
+            null;
+         end if;
+         Last := Text'First - 1;
+         return;
+      end if;
+
       Text (Text'First .. Text'First + N - 1) := Clipboard (1 .. N);
       Last := Text'First + N - 1;
+
+      if GlobalUnlock (hData) = 0 then
+         null;
+      end if;
+      if CloseClipboard = 0 then
+         null;
+      end if;
    end Get_Clipboard;
 
    procedure Set_Clipboard (Text : String) is
