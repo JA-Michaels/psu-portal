@@ -3,7 +3,7 @@
 --  CI and tests build against this port. It is also the template for
 --  a new port: copy it, replace the bodies.
 
-with Ada.Calendar;
+with Ada.Real_Time;
 
 package body Portal.Backend with SPARK_Mode => Off is
 
@@ -11,7 +11,7 @@ package body Portal.Backend with SPARK_Mode => Off is
    Open        : array (Valid_Window_Id) of Boolean := [others => False];
    Sizes       : array (Valid_Window_Id) of Bedrock.Screen.Size;
    Polls       : Natural := 0;
-   Start       : Ada.Calendar.Time;
+   Start       : Ada.Real_Time.Time;
 
    Quit_After  : constant := 100;
    --  Poll returns Quit exactly once, on the Nth call, so that "loop
@@ -30,15 +30,19 @@ package body Portal.Backend with SPARK_Mode => Off is
 
    procedure Initialize (Success : out Boolean) is
    begin
-      Start := Ada.Calendar.Clock;
+      Start := Ada.Real_Time.Clock;
       Initialized := True;
       Success := True;
    end Initialize;
 
    procedure Finalize is
    begin
-      Open := [others => False];
-      Initialized := False;
+      Open           := [others => False];
+      Q_Head         := 0;
+      Q_Count        := 0;
+      Polls          := 0;
+      Clipboard_Last := 0;
+      Initialized    := False;
    end Finalize;
 
    procedure Create_Window
@@ -67,9 +71,19 @@ package body Portal.Backend with SPARK_Mode => Off is
 
    procedure Set_Title (Window : Window_Id; Title : String) is null;
 
-   procedure Set_Size (Window : Window_Id; Size : Bedrock.Screen.Size) is
+   procedure Set_Size
+     (Window : Window_Id; Size : Bedrock.Screen.Size)
+   is
    begin
-      Sizes (Window) := Size;
+      if Sizes (Window) /= Size then
+         Sizes (Window) := Size;
+
+         Push
+           ((Kind => Window_Resized,
+             Time => Now,
+             Window => Window,
+             Size => Size));
+      end if;
    end Set_Size;
 
    function Get_Size (Window : Window_Id) return Bedrock.Screen.Size is (Sizes (Window));
@@ -138,12 +152,14 @@ package body Portal.Backend with SPARK_Mode => Off is
    end Set_Clipboard;
 
    function Now return Ticks is
-      use Ada.Calendar;
+      use Ada.Real_Time;
    begin
       if not Initialized then
          return 0;
       end if;
-      return Ticks (Duration'(Clock - Start) * 1000.0);
+
+      return Ticks
+        (To_Duration (Clock - Start) * 1000.0);
    end Now;
 
    procedure Sleep (Ms : Natural) is

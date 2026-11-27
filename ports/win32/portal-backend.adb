@@ -12,6 +12,7 @@ with Interfaces;          use Interfaces;
 with Interfaces.C;        use Interfaces.C;
 with System;              use type System.Address;
 with Portal.Win32;        use Portal.Win32;
+with Ada.Unchecked_Deallocation;
 
 package body Portal.Backend with SPARK_Mode => Off is
 
@@ -21,9 +22,15 @@ package body Portal.Backend with SPARK_Mode => Off is
    Start       : Unsigned_64 := 0;
 
    type Window_Slot is record
-      Open   : Boolean := False;
-      Handle : HWND := System.Null_Address;
-      Size   : Bedrock.Screen.Size;
+      Open          : Boolean := False;
+      Handle        : HWND := System.Null_Address;
+      Size          : Bedrock.Screen.Size;
+      Have_Mouse    : Boolean := False;
+      Mouse_Tracked : Boolean := False;
+      Last_X        : Pixels := 0;
+      Last_Y        : Pixels := 0;
+      Shape         : Cursor_Shape := Arrow;
+      Style         : DWORD := WS_OVERLAPPEDWINDOW;
    end record;
    Slots : array (Valid_Window_Id) of Window_Slot;
 
@@ -34,10 +41,40 @@ package body Portal.Backend with SPARK_Mode => Off is
    Keys_Down : array (Key) of Boolean := [others => False];
    Buttons   : Button_State := [others => False];
    Text_Enabled : array (Valid_Window_Id) of Boolean := [others => False];
-   Cursor_Cur : HCURSOR := System.Null_Address;
+   Cursor_Visible : Boolean := True;
 
    Clipboard      : String (1 .. Max_Clipboard);
    Clipboard_Last : Natural := 0;
+
+   type Byte is mod 2 ** 8;
+   type Byte_Array is array (Natural range <>) of Byte with Pack;
+   type Byte_Array_Access is access Byte_Array;
+
+   procedure Free_Presentation_Data is
+     new Ada.Unchecked_Deallocation
+       (Byte_Array, Byte_Array_Access);
+
+   Presentation_Data : Byte_Array_Access := null;
+
+   WM_MOUSELEAVE : constant UINT := 16#02A3#;
+   TME_LEAVE     : constant DWORD := 16#00000002#;
+
+   WM_SETCURSOR : constant UINT := 16#0020#;
+   HTCLIENT     : constant := 1;
+
+   type TRACK_MOUSE_EVENT is record
+      Size       : DWORD;
+      Flags      : DWORD;
+      Window     : HWND;
+      Hover_Time : DWORD;
+   end record
+     with Convention => C;
+
+   type Cursor_Point is record
+      X : long;
+      Y : long;
+   end record
+     with Convention => C_Pass_By_Copy;
 
    function To_Address (N : Integer) return System.Address is
      (System'To_Address (N));
@@ -51,10 +88,27 @@ package body Portal.Backend with SPARK_Mode => Off is
    function Dequeue return Event;
    function Id_Of (H : HWND) return Window_Id;
    function To_Key (VK : WPARAM) return Key;
+   function To_Physical_Key (VK : WPARAM; L : LPARAM) return Key;
    function Current_Mods return Modifiers;
    function Wnd_Proc (H : HWND; Msg : UINT; W : WPARAM; L : LPARAM) return LRESULT
      with Convention => Stdcall;
    procedure Pump;
+   procedure Reset_State;
+   function TrackMouseEvent (Info : access TRACK_MOUSE_EVENT) return BOOL
+     with Import, Convention => Stdcall, External_Name => "TrackMouseEvent";
+   function Native_Window_From_Point
+     (P : Cursor_Point) return HWND
+     with Import, Convention => Stdcall,
+          External_Name => "WindowFromPoint";
+
+   function Native_Get_Client_Rect (H : HWND; R : access Win_Rect) return BOOL
+     with Import, Convention => Stdcall, External_Name => "GetClientRect";
+   function Mouse_Delta (Current, Previous : Pixels) return Pixels;
+
+   procedure Apply_Cursor (Window : Window_Id);
+   procedure Refresh_Cursor;
+
+   procedure Ensure_Presentation_Data (Required : Positive);
 
    procedure Enqueue (E : Event) is
    begin
@@ -121,6 +175,156 @@ package body Portal.Backend with SPARK_Mode => Off is
       end case;
    end To_Key;
 
+   function To_Physical_Key
+     (VK : WPARAM; L : LPARAM) return Key
+   is
+      Scan : constant Natural :=
+        Natural ((L / 16#10000#) and 16#FF#);
+
+      Extended : constant Boolean :=
+        (L and 16#01000000#) /= 0;
+
+      Code : constant Natural :=
+        (if Extended then Scan + 256 else Scan);
+   begin
+      --  Pause and Print Screen have special scan sequences.
+      if VK = 16#13# then
+         return Key_Pause;
+      elsif VK = 16#2C# then
+         return Key_Print_Screen;
+      end if;
+
+      --  Fall back when no physical scancode is available.
+      if Scan = 0 then
+         return To_Key (VK);
+      end if;
+
+      case Code is
+
+         --  Top letter row.
+         when 16#10# => return Key_Q;
+         when 16#11# => return Key_W;
+         when 16#12# => return Key_E;
+         when 16#13# => return Key_R;
+         when 16#14# => return Key_T;
+         when 16#15# => return Key_Y;
+         when 16#16# => return Key_U;
+         when 16#17# => return Key_I;
+         when 16#18# => return Key_O;
+         when 16#19# => return Key_P;
+
+         --  Home letter row.
+         when 16#1E# => return Key_A;
+         when 16#1F# => return Key_S;
+         when 16#20# => return Key_D;
+         when 16#21# => return Key_F;
+         when 16#22# => return Key_G;
+         when 16#23# => return Key_H;
+         when 16#24# => return Key_J;
+         when 16#25# => return Key_K;
+         when 16#26# => return Key_L;
+
+         --  Bottom letter row.
+         when 16#2C# => return Key_Z;
+         when 16#2D# => return Key_X;
+         when 16#2E# => return Key_C;
+         when 16#2F# => return Key_V;
+         when 16#30# => return Key_B;
+         when 16#31# => return Key_N;
+         when 16#32# => return Key_M;
+
+         --  Number row.
+         when 16#02# => return Key_1;
+         when 16#03# => return Key_2;
+         when 16#04# => return Key_3;
+         when 16#05# => return Key_4;
+         when 16#06# => return Key_5;
+         when 16#07# => return Key_6;
+         when 16#08# => return Key_7;
+         when 16#09# => return Key_8;
+         when 16#0A# => return Key_9;
+         when 16#0B# => return Key_0;
+
+         --  Punctuation.
+         when 16#0C# => return Key_Minus;
+         when 16#0D# => return Key_Equals;
+         when 16#1A# => return Key_Left_Bracket;
+         when 16#1B# => return Key_Right_Bracket;
+         when 16#2B# => return Key_Backslash;
+         when 16#27# => return Key_Semicolon;
+         when 16#28# => return Key_Apostrophe;
+         when 16#29# => return Key_Grave;
+         when 16#33# => return Key_Comma;
+         when 16#34# => return Key_Period;
+         when 16#35# => return Key_Slash;
+
+         --  Common special keys.
+         when 16#01# => return Key_Escape;
+         when 16#0E# => return Key_Backspace;
+         when 16#0F# => return Key_Tab;
+         when 16#1C# => return Key_Return;
+         when 16#39# => return Key_Space;
+         when 16#3A# => return Key_Caps_Lock;
+         when 16#46# => return Key_Scroll_Lock;
+
+         --  Function keys.
+         when 16#3B# .. 16#44# =>
+            return Key'Val
+              (Key'Pos (Key_F1) + Code - 16#3B#);
+
+         when 16#57# => return Key_F11;
+         when 16#58# => return Key_F12;
+
+         --  Modifiers.
+         when 16#2A#  => return Key_Left_Shift;
+         when 16#36#  => return Key_Right_Shift;
+         when 16#1D#  => return Key_Left_Ctrl;
+         when 16#11D# => return Key_Right_Ctrl;
+         when 16#38#  => return Key_Left_Alt;
+         when 16#138# => return Key_Right_Alt;
+         when 16#15B# => return Key_Left_Super;
+         when 16#15C# => return Key_Right_Super;
+         when 16#15D# => return Key_Menu;
+
+         --  Extended navigation keys.
+         when 16#147# => return Key_Home;
+         when 16#148# => return Key_Up;
+         when 16#149# => return Key_Page_Up;
+         when 16#14B# => return Key_Left;
+         when 16#14D# => return Key_Right;
+         when 16#14F# => return Key_End;
+         when 16#150# => return Key_Down;
+         when 16#151# => return Key_Page_Down;
+         when 16#152# => return Key_Insert;
+         when 16#153# => return Key_Delete;
+
+         --  Numeric keypad.
+         when 16#52# => return Key_KP_0;
+         when 16#4F# => return Key_KP_1;
+         when 16#50# => return Key_KP_2;
+         when 16#51# => return Key_KP_3;
+         when 16#4B# => return Key_KP_4;
+         when 16#4C# => return Key_KP_5;
+         when 16#4D# => return Key_KP_6;
+         when 16#47# => return Key_KP_7;
+         when 16#48# => return Key_KP_8;
+         when 16#49# => return Key_KP_9;
+
+         when 16#135# => return Key_KP_Divide;
+         when 16#37#  => return Key_KP_Multiply;
+         when 16#4A#  => return Key_KP_Minus;
+         when 16#4E#  => return Key_KP_Plus;
+         when 16#11C# => return Key_KP_Enter;
+         when 16#53#  => return Key_KP_Period;
+
+         --  Additional special keys.
+         when 16#137# => return Key_Print_Screen;
+
+         when others => return Key_Unknown;
+
+      end case;
+   end To_Physical_Key;
+
    function Current_Mods return Modifiers is
      ((Shift => Keys_Down (Key_Left_Shift) or Keys_Down (Key_Right_Shift),
        Ctrl  => Keys_Down (Key_Left_Ctrl)  or Keys_Down (Key_Right_Ctrl),
@@ -139,6 +343,82 @@ package body Portal.Backend with SPARK_Mode => Off is
    function Hi (L : LPARAM) return Pixels is
      (Pixels (To_I16 (Unsigned_16 ((L / 16#10000#) and 16#FFFF#))));
 
+   function Mouse_Delta
+     (Current, Previous : Pixels) return Pixels
+   is
+      Difference : constant Integer :=
+        Integer (Current) - Integer (Previous);
+   begin
+      return Pixels
+        (Integer'Max
+           (Integer (Pixels'First),
+            Integer'Min
+              (Integer (Pixels'Last), Difference)));
+   end Mouse_Delta;
+
+   procedure Apply_Cursor (Window : Window_Id) is
+      C : HCURSOR := System.Null_Address;
+
+      Id : constant Integer :=
+        (case Slots (Window).Shape is
+           when Arrow       => IDC_ARROW,
+           when I_Beam      => IDC_IBEAM,
+           when Crosshair   => IDC_CROSS,
+           when Hand        => IDC_HAND,
+           when Resize_EW   => IDC_SIZEWE,
+           when Resize_NS   => IDC_SIZENS,
+           when Resize_NWSE => IDC_SIZENWSE,
+           when Resize_NESW => IDC_SIZENESW,
+           when Not_Allowed => IDC_NO,
+           when Busy        => IDC_WAIT);
+   begin
+      if Cursor_Visible then
+         C := LoadCursorA
+           (System.Null_Address, To_Address (Id));
+
+         if C = System.Null_Address then
+            C := LoadCursorA
+              (System.Null_Address, To_Address (IDC_ARROW));
+         end if;
+      end if;
+
+      if SetCursor (C) = System.Null_Address then
+         null;
+      end if;
+   end Apply_Cursor;
+
+   procedure Refresh_Cursor is
+      P  : aliased Win_Point;
+      R  : aliased Win_Rect;
+      H  : HWND;
+      Id : Window_Id;
+   begin
+      if GetCursorPos (P'Access) = 0 then
+         return;
+      end if;
+
+      H := Native_Window_From_Point ((P.X, P.Y));
+      Id := Id_Of (H);
+
+      if Id = No_Window then
+         return;
+      end if;
+
+      if ScreenToClient (H, P'Access) = 0 then
+         return;
+      end if;
+
+      if Native_Get_Client_Rect (H, R'Access) = 0 then
+         return;
+      end if;
+
+      if P.X >= R.Left and then P.X < R.Right
+        and then P.Y >= R.Top and then P.Y < R.Bottom
+      then
+         Apply_Cursor (Id);
+      end if;
+   end Refresh_Cursor;
+
    function Wnd_Proc (H : HWND; Msg : UINT; W : WPARAM; L : LPARAM) return LRESULT is
       Id : constant Window_Id := Id_Of (H);
       T  : constant Ticks := Now;
@@ -151,89 +431,207 @@ package body Portal.Backend with SPARK_Mode => Off is
          when WM_CLOSE =>
             Enqueue ((Kind => Window_Close, Time => T, Window => Id));
             return 0;
+
          when WM_SIZE =>
+            --  SIZE_MINIMIZED = 1.
+            --  Preserve the last usable framebuffer dimensions.
+            if W = 1 then
+               Slots (Id).Have_Mouse := False;
+               return 0;
+            end if;
+
             declare
-               S : constant Bedrock.Screen.Size := (Extent (Lo (L)), Extent (Hi (L)));
+               R : aliased Win_Rect;
             begin
-               if S /= Slots (Id).Size then
-                  Slots (Id).Size := S;
-                  Enqueue ((Kind => Window_Resized, Time => T, Window => Id, Size => S));
+               if Native_Get_Client_Rect (H, R'Access) /= 0
+                 and then R.Right > 0
+                 and then R.Bottom > 0
+                 and then R.Right <= long (Extent'Last)
+                 and then R.Bottom <= long (Extent'Last)
+               then
+                  declare
+                     S : constant Bedrock.Screen.Size :=
+                       (Extent (R.Right), Extent (R.Bottom));
+                  begin
+                     if S /= Slots (Id).Size then
+                        Slots (Id).Size := S;
+                        Slots (Id).Have_Mouse := False;
+
+                        Enqueue
+                          ((Kind => Window_Resized,
+                            Time => T,
+                            Window => Id,
+                            Size => S));
+                     end if;
+                  end;
                end if;
             end;
+
             return 0;
+
          when WM_PAINT =>
             Enqueue ((Kind => Window_Expose, Time => T, Window => Id));
             return DefWindowProcA (H, Msg, W, L);
-         when WM_SETFOCUS =>
-            Enqueue ((Kind => Window_Focus_In, Time => T, Window => Id)); return 0;
-         when WM_KILLFOCUS =>
-            Enqueue ((Kind => Window_Focus_Out, Time => T, Window => Id)); return 0;
 
-         when WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP =>
+         when WM_SETFOCUS =>
+            Slots (Id).Have_Mouse := False;
+            Enqueue
+              ((Kind => Window_Focus_In, Time => T, Window => Id));
+            return 0;
+
+         when WM_KILLFOCUS =>
+            Keys_Down := [others => False];
+            Buttons   := [others => False];
+            Slots (Id).Have_Mouse := False;
+            Enqueue
+              ((Kind => Window_Focus_Out, Time => T, Window => Id));
+            return 0;
+
+         when WM_KEYDOWN | WM_SYSKEYDOWN
+            | WM_KEYUP | WM_SYSKEYUP =>
             declare
-               K    : constant Key := To_Key (W);
-               Down : constant Boolean := Msg in WM_KEYDOWN | WM_SYSKEYDOWN;
-               Repeat : constant Boolean := Down and then Keys_Down (K);
+               K : constant Key := To_Physical_Key (W, L);
+
+               Down : constant Boolean :=
+                 Msg in WM_KEYDOWN | WM_SYSKEYDOWN;
+
+               Repeat : constant Boolean :=
+                 Down and then (L and 16#40000000#) /= 0;
             begin
-               Keys_Down (K) := Down;
+               if K /= Key_Unknown then
+                  Keys_Down (K) := Down;
+               end if;
+
                if Down then
-                  Enqueue ((Kind => Key_Down, Time => T, Window => Id,
-                            Key => K, Mods => Current_Mods, Repeat => Repeat));
+                  Enqueue
+                    ((Kind => Key_Down,
+                      Time => T,
+                      Window => Id,
+                      Key => K,
+                      Mods => Current_Mods,
+                      Repeat => Repeat));
                else
-                  Enqueue ((Kind => Key_Up, Time => T, Window => Id,
-                            Key => K, Mods => Current_Mods, Repeat => False));
+                  Enqueue
+                    ((Kind => Key_Up,
+                      Time => T,
+                      Window => Id,
+                      Key => K,
+                      Mods => Current_Mods,
+                      Repeat => False));
                end if;
             end;
+
             return 0;
 
          when WM_CHAR =>
             if Text_Enabled (Id) and then W in 16#20# .. 16#7E# then
-               Enqueue ((Kind => Text_Input, Time => T, Window => Id,
-                         Text => [Character'Val (W), ' ', ' ', ' '], Length => 1));
+               Enqueue
+                 ((Kind => Text_Input, Time => T, Window => Id,
+                   Text => [Character'Val (W), ' ', ' ', ' '],
+                   Length => 1));
             end if;
             return 0;
 
          when WM_MOUSEMOVE =>
-            Enqueue ((Kind => Mouse_Move, Time => T, Window => Id,
-                      At_Pos => (Lo (L), Hi (L)), Delta_X => 0, Delta_Y => 0,
-                      Held => Buttons));
+            declare
+               X : constant Pixels := Lo (L);
+               Y : constant Pixels := Hi (L);
+
+               DX, DY : Pixels := 0;
+
+               Track : aliased TRACK_MOUSE_EVENT :=
+                 (Size => DWORD (TRACK_MOUSE_EVENT'Object_Size / 8),
+                  Flags => TME_LEAVE,
+                  Window => H,
+                  Hover_Time => 0);
+            begin
+               if not Slots (Id).Mouse_Tracked then
+                  if TrackMouseEvent (Track'Access) /= 0 then
+                     Slots (Id).Mouse_Tracked := True;
+                     Slots (Id).Have_Mouse := False;
+
+                     Enqueue
+                       ((Kind => Mouse_Enter, Time => T, Window => Id));
+                  end if;
+               end if;
+
+               if Slots (Id).Have_Mouse then
+                  DX := Mouse_Delta (X, Slots (Id).Last_X);
+                  DY := Mouse_Delta (Y, Slots (Id).Last_Y);
+               end if;
+
+               Slots (Id).Last_X := X;
+               Slots (Id).Last_Y := Y;
+               Slots (Id).Have_Mouse := True;
+
+               Enqueue
+                 ((Kind => Mouse_Move, Time => T, Window => Id,
+                   At_Pos => (X, Y), Delta_X => DX, Delta_Y => DY,
+                   Held => Buttons));
+            end;
             return 0;
 
-         when WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN
-            | WM_LBUTTONUP | WM_RBUTTONUP | WM_MBUTTONUP | WM_XBUTTONUP =>
+         when WM_MOUSELEAVE =>
+            Slots (Id).Have_Mouse := False;
+            Slots (Id).Mouse_Tracked := False;
+
+            Enqueue
+              ((Kind => Mouse_Leave, Time => T, Window => Id));
+            return 0;
+
+         when WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN
+            | WM_XBUTTONDOWN | WM_LBUTTONUP | WM_RBUTTONUP
+            | WM_MBUTTONUP | WM_XBUTTONUP =>
             declare
                Down : constant Boolean :=
-                 Msg in WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN;
+                 Msg in WM_LBUTTONDOWN | WM_RBUTTONDOWN
+                   | WM_MBUTTONDOWN | WM_XBUTTONDOWN;
+
                B : constant Mouse_Button :=
                  (case Msg is
                     when WM_LBUTTONDOWN | WM_LBUTTONUP => Left,
                     when WM_RBUTTONDOWN | WM_RBUTTONUP => Right,
                     when WM_MBUTTONDOWN | WM_MBUTTONUP => Middle,
-                    when others => (if (W / 16#10000#) = 1 then Back else Forward));
+                    when others =>
+                       (if (W / 16#10000#) = 1 then Back else Forward));
+
                P : constant Point := (Lo (L), Hi (L));
             begin
                Buttons (B) := Down;
+
                if Down then
-                  Enqueue ((Kind => Mouse_Down, Time => T, Window => Id,
-                            Button => B, Where => P, Clicks => 1));
+                  Enqueue
+                    ((Kind => Mouse_Down, Time => T, Window => Id,
+                      Button => B, Where => P, Clicks => 1));
                else
-                  Enqueue ((Kind => Mouse_Up, Time => T, Window => Id,
-                            Button => B, Where => P, Clicks => 1));
+                  Enqueue
+                    ((Kind => Mouse_Up, Time => T, Window => Id,
+                      Button => B, Where => P, Clicks => 1));
                end if;
             end;
             return 0;
 
          when WM_MOUSEWHEEL =>
             declare
-               Delta_Raw : constant Integer_16 := To_I16 (
-                  Unsigned_16 ((W / 16#10000#) and 16#FFFF#)
-               );
+               Delta_Raw : constant Integer_16 :=
+                 To_I16
+                   (Unsigned_16 ((W / 16#10000#) and 16#FFFF#));
             begin
-               Enqueue ((Kind => Mouse_Wheel, Time => T, Window => Id,
-                         Wheel_X => 0, Wheel_Y => Pixels (Integer (Delta_Raw) / 120),
-                         Wheel_At => (Lo (L), Hi (L))));
+               Enqueue
+                 ((Kind => Mouse_Wheel, Time => T, Window => Id,
+                   Wheel_X => 0,
+                   Wheel_Y => Pixels (Integer (Delta_Raw) / 120),
+                   Wheel_At => (Lo (L), Hi (L))));
             end;
             return 0;
+
+         when WM_SETCURSOR =>
+            if (L and 16#FFFF#) = HTCLIENT then
+               Apply_Cursor (Id);
+               return 1;
+            end if;
+
+            return DefWindowProcA (H, Msg, W, L);
 
          when WM_DESTROY =>
             return 0;
@@ -246,10 +644,15 @@ package body Portal.Backend with SPARK_Mode => Off is
    procedure Pump is
       M : aliased MSG;
    begin
-      while PeekMessageA (M'Access, System.Null_Address, 0, 0, PM_REMOVE) /= 0 loop
+      --  Avoid draining native messages into a full event queue.
+      while Q_Count <= Max_Queue - 2
+        and then PeekMessageA
+          (M'Access, System.Null_Address, 0, 0, PM_REMOVE) /= 0
+      loop
          if TranslateMessage (M'Access) = 0 then
             null;
          end if;
+
          if DispatchMessageA (M'Access) = 0 then
             null;
          end if;
@@ -259,6 +662,29 @@ package body Portal.Backend with SPARK_Mode => Off is
    ---------------------------------------------------------------------
    --  Lifetime
    ---------------------------------------------------------------------
+
+   procedure Reset_State is
+   begin
+      Q_Head         := 0;
+      Q_Count        := 0;
+      Keys_Down      := [others => False];
+      Buttons        := [others => False];
+      Text_Enabled   := [others => False];
+      Clipboard_Last := 0;
+      Cursor_Visible := True;
+   end Reset_State;
+
+   procedure Ensure_Presentation_Data (Required : Positive) is
+   begin
+      if Presentation_Data = null
+        or else Presentation_Data'Length < Required
+      then
+         Free_Presentation_Data (Presentation_Data);
+
+         Presentation_Data :=
+           new Byte_Array (0 .. Required - 1);
+      end if;
+   end Ensure_Presentation_Data;
 
    procedure Initialize (Success : out Boolean) is
       WC : aliased WNDCLASSEXA;
@@ -278,14 +704,23 @@ package body Portal.Backend with SPARK_Mode => Off is
 
    procedure Finalize is
    begin
+      Free_Presentation_Data (Presentation_Data);
+      Set_Cursor_Visible (True);
+      --  Destroy all remaining windows.
       for W in Valid_Window_Id loop
          if Slots (W).Open then
-            if DestroyWindow (Slots (W).Handle) = 0 then
-               null;
-            end if;
-            Slots (W).Open := False;
+            Destroy_Window (W);
          end if;
       end loop;
+
+      --  Release the registered window class.
+      if UnregisterClassA (Class_Name'Address, Instance) = 0 then
+         null;
+      end if;
+
+      Reset_State;
+
+      Instance    := System.Null_Address;
       Initialized := False;
    end Finalize;
 
@@ -312,7 +747,7 @@ package body Portal.Backend with SPARK_Mode => Off is
          Style := Style or WS_VISIBLE;
       end if;
       if AdjustWindowRect (R'Access, Style, 0) = 0 then
-         null;
+         return;
       end if;
       for W in Valid_Window_Id loop
          if not Slots (W).Open then
@@ -324,7 +759,12 @@ package body Portal.Backend with SPARK_Mode => Off is
             if H = System.Null_Address then
                return;
             end if;
-            Slots (W) := (Open => True, Handle => H, Size => Size);
+            Slots (W) :=
+              (Open   => True,
+               Handle => H,
+               Size   => Size,
+               Style  => Style,
+               others => <>);
             Window := W;
             return;
          end if;
@@ -336,7 +776,18 @@ package body Portal.Backend with SPARK_Mode => Off is
       if DestroyWindow (Slots (Window).Handle) = 0 then
          null;
       end if;
-      Slots (Window).Open := False;
+
+      Slots (Window).Open   := False;
+      Slots (Window).Handle := System.Null_Address;
+
+      Text_Enabled (Window) := False;
+
+      Slots (Window).Have_Mouse    := False;
+      Slots (Window).Mouse_Tracked := False;
+      Slots (Window).Last_X        := 0;
+      Slots (Window).Last_Y        := 0;
+      Slots (Window).Shape := Arrow;
+      Slots (Window).Style := WS_OVERLAPPEDWINDOW;
    end Destroy_Window;
 
    procedure Set_Title (Window : Window_Id; Title : String) is
@@ -347,15 +798,29 @@ package body Portal.Backend with SPARK_Mode => Off is
       end if;
    end Set_Title;
 
-   procedure Set_Size (Window : Window_Id; Size : Bedrock.Screen.Size) is
-      R : aliased Win_Rect := (0, 0, long (Size.Width), long (Size.Height));
+   procedure Set_Size
+     (Window : Window_Id; Size : Bedrock.Screen.Size)
+   is
+      R : aliased Win_Rect :=
+        (0, 0, long (Size.Width), long (Size.Height));
    begin
-      if AdjustWindowRect (R'Access, WS_OVERLAPPEDWINDOW, 0) = 0 then
-         null;
+      if Size.Width = 0 or else Size.Height = 0 then
+         return;
       end if;
-      if SetWindowPos (Slots (Window).Handle, System.Null_Address, 0, 0,
-                       int (R.Right - R.Left), int (R.Bottom - R.Top),
-                       16#0002# + 16#0004#) = 0  --  SWP_NOMOVE | SWP_NOZORDER
+
+      if AdjustWindowRect
+        (R'Access, Slots (Window).Style, 0) = 0
+      then
+         return;
+      end if;
+
+      if SetWindowPos
+        (Slots (Window).Handle,
+         System.Null_Address,
+         0, 0,
+         int (R.Right - R.Left),
+         int (R.Bottom - R.Top),
+         16#0002# + 16#0004#) = 0
       then
          null;
       end if;
@@ -372,50 +837,84 @@ package body Portal.Backend with SPARK_Mode => Off is
 
    procedure Hide (Window : Window_Id) is
    begin
+      Slots (Window).Have_Mouse := False;
+
       if ShowWindow (Slots (Window).Handle, SW_HIDE) = 0 then
          null;
       end if;
    end Hide;
 
    function Scale (Window : Window_Id) return Positive is
-     (Positive (GetDpiForWindow (Slots (Window).Handle)) * 100 / 96);
+      Dpi : constant UINT :=
+        GetDpiForWindow (Slots (Window).Handle);
+   begin
+      if Dpi = 0 then
+         return 100;
+      end if;
+
+      return Positive'Max (1, Positive (Dpi) * 100 / 96);
+   end Scale;
 
    ---------------------------------------------------------------------
    --  Present: RGBA -> BGRX top-down DIB, StretchDIBits 1:1
    ---------------------------------------------------------------------
 
-   type Byte is mod 2 ** 8;
-   type Byte_Array is array (Natural range <>) of Byte with Pack;
-
    procedure Present (Window : Window_Id; Frame : Buffer) is
-      W    : constant Natural := Natural (Width (Frame));
-      H    : constant Natural := Natural (Height (Frame));
-      Data : Byte_Array (0 .. W * H * 4 - 1);
-      I    : Natural := 0;
+      W : constant Natural := Natural (Width (Frame));
+      H : constant Natural := Natural (Height (Frame));
+
+      Required : constant Long_Long_Integer :=
+        Long_Long_Integer (W) * Long_Long_Integer (H) * 4;
+
+      I : Natural := 0;
+
       Info : aliased constant BITMAPINFO :=
-      (Header => (Size   => DWORD (BITMAPINFOHEADER'Size / 8),
-                  Width  => long (W),
-                  Height => -long (H),
-                  others => <>),
+        (Header =>
+           (Size   => DWORD (BITMAPINFOHEADER'Size / 8),
+            Width  => long (W),
+            Height => -long (H),
+            others => <>),
          Colors => 0);
-      DC : constant HDC := GetDC (Slots (Window).Handle);
+
+      DC : HDC;
    begin
+      if Required not in 1 .. Long_Long_Integer (Natural'Last) then
+         return;
+      end if;
+
+      Ensure_Presentation_Data (Positive (Required));
+
+      --  Convert RGBA to native BGRX.
       for Y in 0 .. Frame.Height loop
          for X in 0 .. Frame.Width loop
             declare
                C : constant Color := Frame.Data (Y, X);
             begin
-               Data (I) := Byte (C.B); Data (I + 1) := Byte (C.G);
-               Data (I + 2) := Byte (C.R); Data (I + 3) := 0;
+               Presentation_Data (I)     := Byte (C.B);
+               Presentation_Data (I + 1) := Byte (C.G);
+               Presentation_Data (I + 2) := Byte (C.R);
+               Presentation_Data (I + 3) := 0;
+
                I := I + 4;
             end;
          end loop;
       end loop;
-      if StretchDIBits (DC, 0, 0, int (W), int (H), 0, 0, int (W), int (H),
-                        Data'Address, Info'Access, DIB_RGB_COLORS, SRCCOPY) = 0
+
+      DC := GetDC (Slots (Window).Handle);
+
+      if DC = System.Null_Address then
+         return;
+      end if;
+
+      if StretchDIBits
+        (DC, 0, 0, int (W), int (H),
+         0, 0, int (W), int (H),
+         Presentation_Data.all'Address,
+         Info'Access, DIB_RGB_COLORS, SRCCOPY) = 0
       then
          null;
       end if;
+
       if ReleaseDC (Slots (Window).Handle, DC) = 0 then
          null;
       end if;
@@ -479,27 +978,29 @@ package body Portal.Backend with SPARK_Mode => Off is
       Text_Enabled (Window) := Enabled;
    end Set_Text_Input;
 
-   procedure Set_Cursor (Window : Window_Id; Shape : Cursor_Shape) is
-      pragma Unreferenced (Window);
-      --  Win32 cursors are per-thread, not per-window; a WM_SETCURSOR
-      --  handler that re-applies Cursor_Cur is a milestone.
-      Id : constant Integer :=
-        (case Shape is
-           when Arrow => IDC_ARROW, when I_Beam => IDC_IBEAM, when Crosshair => IDC_CROSS,
-           when Hand => IDC_HAND, when Resize_EW => IDC_SIZEWE, when Resize_NS => IDC_SIZENS,
-           when Resize_NWSE => IDC_SIZENWSE, when Resize_NESW => IDC_SIZENESW,
-           when Not_Allowed => IDC_NO, when Busy => IDC_WAIT);
+   procedure Set_Cursor
+     (Window : Window_Id; Shape : Cursor_Shape)
+   is
    begin
-      Cursor_Cur := LoadCursorA (System.Null_Address, To_Address (Id));
-      if SetCursor (Cursor_Cur) = System.Null_Address then
-         null;
+      if not Is_Open (Window) then
+         return;
       end if;
+
+      Slots (Window).Shape := Shape;
+
+      Refresh_Cursor;
    end Set_Cursor;
 
    procedure Set_Cursor_Visible (Visible : Boolean) is
    begin
-      if ShowCursor ((if Visible then 1 else 0)) = 0 then
-         null;
+      if Cursor_Visible = Visible then
+         return;
+      end if;
+
+      Cursor_Visible := Visible;
+
+      if Initialized then
+         Refresh_Cursor;
       end if;
    end Set_Cursor_Visible;
 
