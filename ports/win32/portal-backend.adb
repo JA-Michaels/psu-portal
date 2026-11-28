@@ -13,6 +13,7 @@ with Interfaces.C;        use Interfaces.C;
 with System;              use type System.Address;
 with Portal.Win32;        use Portal.Win32;
 with Bedrock.Input;
+with Ada.Strings.UTF_Encoding.Wide_Strings;
 
 package body Portal.Backend with SPARK_Mode => Off is
 
@@ -36,9 +37,6 @@ package body Portal.Backend with SPARK_Mode => Off is
    Buttons   : Button_State := [others => False];
    Text_Enabled : array (Valid_Window_Id) of Boolean := [others => False];
    Cursor_Cur : HCURSOR := System.Null_Address;
-
-   Clipboard      : String (1 .. Max_Clipboard);
-   Clipboard_Last : Natural := 0;
 
    Gamepad_Cache      : array (Valid_Gamepad_Id) of Gamepad_State :=
       [others => (Connected => False, others => <>)];
@@ -241,6 +239,10 @@ package body Portal.Backend with SPARK_Mode => Off is
             end;
             return 0;
 
+         when WM_CLIPBOARDUPDATE =>
+            Enqueue ((Kind => Clipboard_Changed, Time => T, Window => Id));
+         return 0;
+
          when WM_DESTROY =>
             return 0;
 
@@ -379,6 +381,9 @@ package body Portal.Backend with SPARK_Mode => Off is
             end if;
             Slots (W) := (Open => True, Handle => H, Size => Size);
             Window := W;
+            if AddClipboardFormatListener (Slots (W).Handle) = 0 then
+               null;
+            end if;
             return;
          end if;
       end loop;
@@ -386,6 +391,9 @@ package body Portal.Backend with SPARK_Mode => Off is
 
    procedure Destroy_Window (Window : Window_Id) is
    begin
+      if RemoveClipboardFormatListener (Slots (Window).Handle) = 0 then
+         null;
+      end if;
       if DestroyWindow (Slots (Window).Handle) = 0 then
          null;
       end if;
@@ -589,12 +597,11 @@ package body Portal.Backend with SPARK_Mode => Off is
    end Set_Cursor_Visible;
 
    procedure Get_Clipboard (Text : out String; Last : out Natural) is
-      N : constant Natural := Natural'Min (Text'Length, Clipboard_Last);
       hData : HANDLE;
       pData : LPVOID;
    begin
       if OpenClipboard (System.Null_Address) = 0 then
-         Last := Text'First -1;
+         Last := Text'First - 1;
          return;
       end if;
       hData := GetClipboardData (CF_UNICODETEXT);
@@ -613,10 +620,37 @@ package body Portal.Backend with SPARK_Mode => Off is
          Last := Text'First - 1;
          return;
       end if;
-
-      Text (Text'First .. Text'First + N - 1) := Clipboard (1 .. N);
-      Last := Text'First + N - 1;
-
+      declare
+         Alloc_Units : constant size_t := size_t (GlobalSize (hData) / 2);
+         Data_Limit  : constant Natural :=
+            Natural (size_t'Min (Alloc_Units, size_t (Max_Clipboard / 2)));
+         Data : Wide_String (1 .. Data_Limit);
+         for Data'Address use pData;
+         pragma Import (Ada, Data);
+         Str_Len : Natural := 0;
+      begin
+         for I in 1 .. Data_Limit loop
+            exit when Data (I) = Wide_Character'Val (0);
+            Str_Len := I;
+         end loop;
+         if Str_Len > 0 and then Text'Length > 0 then
+            declare
+               Temp_Text : constant String :=
+                  Ada.Strings.UTF_Encoding.Wide_Strings.Encode (Data (1 .. Str_Len));
+               Copy_Len  : constant Natural := Natural'Min (Text'Length, Temp_Text'Length);
+            begin
+               if Copy_Len > 0 then
+                  Text (Text'First .. Text'First + Copy_Len - 1) :=
+                     Temp_Text (Temp_Text'First .. Temp_Text'First + Copy_Len - 1);
+                  Last := Text'First + Copy_Len - 1;
+               else
+                  Last := Text'First - 1;
+               end if;
+            end;
+         else
+            Last := Text'First - 1;
+         end if;
+      end;
       if GlobalUnlock (hData) = 0 then
          null;
       end if;
@@ -626,9 +660,59 @@ package body Portal.Backend with SPARK_Mode => Off is
    end Get_Clipboard;
 
    procedure Set_Clipboard (Text : String) is
+      hMem  : HGLOBAL;
+      pMem  : LPVOID;
+      Temp_Text : constant Wide_String :=
+         Ada.Strings.UTF_Encoding.Wide_Strings.Decode (Text);
+      Alloc_Bytes : constant size_t := size_t ((Temp_Text'Length + 1) * 2);
    begin
-      Clipboard (1 .. Text'Length) := Text;
-      Clipboard_Last := Text'Length;
+      hMem := GlobalAlloc (GMEM_MOVEABLE, Alloc_Bytes);
+      if hMem = System.Null_Address then
+         return;
+      end if;
+      pMem := GlobalLock (hMem);
+      if pMem = System.Null_Address then
+         if GlobalFree (hMem) = System.Null_Address then
+            null;
+         end if;
+         return;
+      end if;
+      declare
+         Dest_Text : Wide_String (1 .. Temp_Text'Length + 1);
+         for Dest_Text'Address use pMem;
+         pragma Import (Ada, Dest_Text);
+      begin
+         if Temp_Text'Length > 0 then
+            Dest_Text (1 .. Temp_Text'Length) := Temp_Text;
+         end if;
+         Dest_Text (Temp_Text'Length + 1) := Wide_Character'Val (0);
+      end;
+      if GlobalUnlock (hMem) = 0 then
+         null;
+      end if;
+      if OpenClipboard (System.Null_Address) = 0 then
+         if GlobalFree (hMem) = System.Null_Address then
+            null;
+         end if;
+         return;
+      end if;
+      if EmptyClipboard = 0 then
+         if CloseClipboard = 0 then
+            null;
+         end if;
+         if GlobalFree (hMem) = System.Null_Address then
+            null;
+         end if;
+         return;
+      end if;
+      if SetClipboardData (CF_UNICODETEXT, hMem) = System.Null_Address then
+         if GlobalFree (hMem) = System.Null_Address then
+            null;
+         end if;
+      end if;
+      if CloseClipboard = 0 then
+         null;
+      end if;
    end Set_Clipboard;
 
    function Now return Ticks is

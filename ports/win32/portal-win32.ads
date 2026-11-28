@@ -146,6 +146,7 @@ private package Portal.Win32 is
    WM_XBUTTONDOWN  : constant := 16#020B#;
    WM_XBUTTONUP    : constant := 16#020C#;
    WM_MOUSELEAVE   : constant := 16#02A3#;
+   WM_CLIPBOARDUPDATE : constant := 16#031D#;
 
    IDC_ARROW : constant := 32512;
    IDC_IBEAM : constant := 32513;
@@ -173,8 +174,8 @@ private package Portal.Win32 is
    XINPUT_GAMEPAD_X              : constant WORD := 16#4000#;
    XINPUT_GAMEPAD_Y              : constant WORD := 16#8000#;
 
-   CF_TEXT        : constant UINT := 16#0001#;
    CF_UNICODETEXT : constant UINT := 16#000D#;
+   GMEM_MOVEABLE : constant UINT := 16#0002#;
 
    ---------------------------------------------------------------------
    --  Functions
@@ -240,6 +241,10 @@ private package Portal.Win32 is
       with Import, Convention => Stdcall, External_Name => "XInputGetState";
    function GetForegroundWindow return HWND
       with Import, Convention => Stdcall, External_Name => "GetForegroundWindow";
+   function AddClipboardFormatListener (lHwnd : HWND) return BOOL
+      with Import, Convention => Stdcall, External_Name => "AddClipboardFormatListener";
+   function RemoveClipboardFormatListener (lHwnd : HWND) return BOOL
+      with Import, Convention => Stdcall, External_Name => "RemoveClipboardFormatListener";
    function OpenClipboard (hWndNewOwner : HWND) return BOOL
       with Import, Convention => Stdcall, External_Name => "OpenClipboard";
    function CloseClipboard return BOOL
@@ -248,11 +253,17 @@ private package Portal.Win32 is
       with Import, Convention => Stdcall, External_Name => "GetClipboardData";
    function SetClipboardData (uFormat : UINT; hMem : HANDLE) return HANDLE
       with Import, Convention => Stdcall, External_Name => "SetClipboardData";
+   function EmptyClipboard return BOOL
+      with Import, Convention => Stdcall, External_Name => "EmptyClipboard";
    function GlobalLock (hMem : HGLOBAL) return LPVOID
       with Import, Convention => Stdcall, External_Name => "GlobalLock";
    function GlobalUnlock (hMem : HGLOBAL) return BOOL
       with Import, Convention => Stdcall, External_Name => "GlobalUnlock";
-   function GlobalSize(hMem : HGLOBAL) return UINT
+   function GlobalSize (hMem : HGLOBAL) return UINT
       with Import, Convention => Stdcall, External_Name => "GlobalSize";
+   function GlobalAlloc (uFlags : UINT; dwBytes : size_t) return HGLOBAL
+      with Import, Convention => Stdcall, External_Name => "GlobalAlloc";
+   function GlobalFree (hMem : HGLOBAL) return HGLOBAL
+      with Import, Convention => Stdcall, External_Name => "GlobalFree";
 
 end Portal.Win32;
