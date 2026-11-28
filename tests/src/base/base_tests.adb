@@ -130,14 +130,47 @@ package body Base_Tests is
       AUnit.Assertions.Assert (E.Kind = Mouse_Enter, "Push/Poll order 1");
       Poll (E);
       AUnit.Assertions.Assert (E.Kind = Mouse_Leave, "Push/Poll order 2");
-      Set_Clipboard ("hello");
       declare
-         S : String (1 .. 16);
+         Large : constant String (1 .. (Max_Clipboard)) := [others => 'A'];
+         S_Large : String (1 .. Max_Clipboard);
+         S : String (1 .. 64);
          L : Natural;
       begin
+         Set_Clipboard ("");
          Get_Clipboard (S, L);
          AUnit.Assertions.Assert (
-            S (1 .. L) = "hello", "clipboard round trip");
+            L = 0, "Clipboard should initially be empty");
+         Set_Clipboard ("Hello, Portal!");
+         Get_Clipboard (S, L);
+         AUnit.Assertions.Assert (
+            L = 14, "Incorrect clipboard length");
+         AUnit.Assertions.Assert (
+            S (1 .. L) = "Hello, Portal!",
+            "Clipboard text mismatch");
+         Set_Clipboard ("Example text with '®¾ Øʁ'");
+         Get_Clipboard (S, L);
+         AUnit.Assertions.Assert (
+            L = 29, "Clipboard replacement length incorrect");
+         AUnit.Assertions.Assert (
+            S (1 .. L) = "Example text with '®¾ Øʁ'",
+            "Clipboard replacement failed");
+         Set_Clipboard (Large);
+         Get_Clipboard (S_Large, L);
+         AUnit.Assertions.Assert (
+            L = Max_Clipboard,
+            "Maximum clipboard length incorrect");
+         AUnit.Assertions.Assert (
+            S_Large (1 .. L) = Large,
+            "Maximum clipboard contents incorrect");
+         Set_Clipboard (Large);
+         Get_Clipboard (S, L);
+         AUnit.Assertions.Assert (
+            L = 64,
+            "Truncation length incorrect");
+         Set_Clipboard ("");
+         Get_Clipboard (S, L);
+         AUnit.Assertions.Assert (
+            L = 0, "Clipboard was not cleared");
       end;
       Destroy_Window (W);
       AUnit.Assertions.Assert (not Is_Open (W), "Destroy_Window");
