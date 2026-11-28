@@ -1,5 +1,6 @@
 
 with Ada.Text_IO;        use Ada.Text_IO;
+with Bedrock.Input;
 with Bedrock.Screen;     use Bedrock.Screen;
 with Portal;
 with Portal.Backend;     use Portal.Backend;
@@ -28,10 +29,10 @@ procedure Demo is
 
    Paddle_Width  : constant Extent := 12;
    Paddle_Height : constant Extent := 80;
-   Paddle_Speed  : constant Pixels := 5;
+   Paddle_Speed  : constant Pixels := 15;
 
    Ball_Size  : constant Extent := 12;
-   Ball_Speed : constant Pixels := 4;
+   Ball_Speed : constant Pixels := 10;
 
    Left_X  : constant Pixels := 20;
    Right_X : constant Pixels := W_Px - 32;
@@ -47,6 +48,9 @@ procedure Demo is
    Ball_Y  : Pixels := 234;
    Ball_DX : Pixels := Ball_Speed;
    Ball_DY : Pixels := 3;
+
+   Input_Left_Y  : Bedrock.Input.Axis_Value := 0;
+   Input_Right_Y : Bedrock.Input.Axis_Value := 0;
 
    Left_Score  : Natural := 0;
    Right_Score : Natural := 0;
@@ -84,7 +88,7 @@ procedure Demo is
    procedure Update_Paddles is
    begin
 
-      --  Player 1: W and S
+      --  Player 1: W and S; Left analog stick Y axis on controller
       if Is_Key_Down (Key_W) then
          Left_Y := Left_Y - Paddle_Speed;
       end if;
@@ -93,7 +97,17 @@ procedure Demo is
          Left_Y := Left_Y + Paddle_Speed;
       end if;
 
-      --  Player 2: I and K
+      if Input_Left_Y > 5000 or else Input_Left_Y < -5000 then
+         Left_Y := Left_Y - Pixels (Integer (Input_Left_Y)
+            * Integer (Paddle_Speed) / 32767);
+      end if;
+
+      if Input_Right_Y > 5000 or else Input_Right_Y < -5000 then
+         Right_Y := Right_Y - Pixels (Integer (Input_Right_Y)
+            * Integer (Paddle_Speed) / 32767);
+      end if;
+
+      --  Player 2: I and K; Right analog stick Y axis on controller
       if Is_Key_Down (Key_I) then
          Right_Y := Right_Y - Paddle_Speed;
       end if;
@@ -255,8 +269,8 @@ begin
    end if;
 
    Put_Line ("Window created successfully!");
-   Put_Line ("Player 1: W / S");
-   Put_Line ("Player 2: I / K");
+   Put_Line ("Player 1: W / S, Y axis of left analog stick of controller");
+   Put_Line ("Player 2: I / K, Y axis of right analog stick of controller");
    Put_Line ("Escape: Quit");
 
    Update_Title;
@@ -279,6 +293,13 @@ begin
             when Key_Down =>
                if E.Key = Key_Escape then
                   Running := False;
+               end if;
+
+            when Gamepad_Axis_Motion =>
+               if E.Axis = Bedrock.Input.Left_Y then
+                  Input_Left_Y := E.Value;
+               elsif E.Axis = Bedrock.Input.Right_Y then
+                  Input_Right_Y := E.Value;
                end if;
 
             when others =>
