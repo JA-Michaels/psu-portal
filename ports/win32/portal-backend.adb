@@ -601,8 +601,24 @@ package body Portal.Backend with SPARK_Mode => Off is
       pData : LPVOID;
    begin
       if OpenClipboard (System.Null_Address) = 0 then
-         Last := Text'First - 1;
-         return;
+         declare
+            Max_Wait : constant Ticks := 25;
+            Deadline : constant Ticks := Now + Max_Wait;
+            Success  : Boolean := False;
+         begin
+            loop
+               if OpenClipboard (System.Null_Address) /= 0 then
+                  Success := True;
+                  exit;
+               end if;
+               exit when Now >= Deadline;
+               delay 0.005;
+            end loop;
+            if not Success then
+               Last := Text'First - 1;
+               return;
+            end if;
+         end;
       end if;
       hData := GetClipboardData (CF_UNICODETEXT);
       if hData = System.Null_Address then
@@ -621,9 +637,9 @@ package body Portal.Backend with SPARK_Mode => Off is
          return;
       end if;
       declare
-         Alloc_Units : constant size_t := size_t (GlobalSize (hData) / 2);
+         Alloc_Units : constant size_t := GlobalSize (hData) / 2;
          Data_Limit  : constant Natural :=
-            Natural (size_t'Min (Alloc_Units, size_t (Max_Clipboard / 2)));
+            Natural (size_t'Min (Alloc_Units, size_t (Max_Clipboard)));
          Data : Wide_String (1 .. Data_Limit);
          for Data'Address use pData;
          pragma Import (Ada, Data);
@@ -691,10 +707,26 @@ package body Portal.Backend with SPARK_Mode => Off is
          null;
       end if;
       if OpenClipboard (System.Null_Address) = 0 then
-         if GlobalFree (hMem) = System.Null_Address then
-            null;
-         end if;
-         return;
+         declare
+            Max_Wait : constant Ticks := 25;
+            Deadline : constant Ticks := Now + Max_Wait;
+            Success  : Boolean := False;
+         begin
+            loop
+               if OpenClipboard (System.Null_Address) /= 0 then
+                  Success := True;
+                  exit;
+               end if;
+               exit when Now >= Deadline;
+               delay 0.005;
+            end loop;
+            if not Success then
+               if GlobalFree (hMem) = System.Null_Address then
+                  null;
+               end if;
+               return;
+            end if;
+         end;
       end if;
       if EmptyClipboard = 0 then
          if CloseClipboard = 0 then

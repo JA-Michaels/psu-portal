@@ -259,7 +259,7 @@ private package Portal.Win32 is
       with Import, Convention => Stdcall, External_Name => "GlobalLock";
    function GlobalUnlock (hMem : HGLOBAL) return BOOL
       with Import, Convention => Stdcall, External_Name => "GlobalUnlock";
-   function GlobalSize (hMem : HGLOBAL) return UINT
+   function GlobalSize (hMem : HGLOBAL) return size_t
       with Import, Convention => Stdcall, External_Name => "GlobalSize";
    function GlobalAlloc (uFlags : UINT; dwBytes : size_t) return HGLOBAL
       with Import, Convention => Stdcall, External_Name => "GlobalAlloc";
